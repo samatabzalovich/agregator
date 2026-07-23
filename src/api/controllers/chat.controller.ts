@@ -11,6 +11,7 @@ import {
   ProfileStatusDto,
   ReadMessageDto,
   SendPresenceDto,
+  StatusStatsQueryDto,
   UpdateMessageDto,
   WhatsAppNumberDto,
 } from '@api/dto/chat.dto';
@@ -64,6 +65,10 @@ export class ChatController {
 
   public async fetchStatusMessage({ instanceName }: InstanceDto, query: Query<MessageUpdate>) {
     return await this.waMonitor.waInstances[instanceName].fetchStatusMessage(query);
+  }
+
+  public async fetchStatusStats({ instanceName }: InstanceDto, query: StatusStatsQueryDto) {
+    return await this.waMonitor.waInstances[instanceName].fetchStatusStats(query);
   }
 
   public async fetchChats({ instanceName }: InstanceDto, query: Query<Contact>) {

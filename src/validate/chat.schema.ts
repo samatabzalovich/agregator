@@ -264,6 +264,22 @@ export const messageUpSchema: JSONSchema7 = {
   },
 };
 
+export const statusStatsSchema: JSONSchema7 = {
+  $id: v4(),
+  type: 'object',
+  properties: {
+    where: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        keyId: { type: 'string' },
+      },
+    },
+    page: { type: 'integer', minimum: 1 },
+    offset: { type: 'integer', minimum: 1 },
+  },
+};
+
 export const privacySettingsSchema: JSONSchema7 = {
   $id: v4(),
   type: 'object',

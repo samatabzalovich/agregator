@@ -86,6 +86,15 @@ export class MarkChatUnreadDto {
   chat?: string;
 }
 
+export class StatusStatsQueryDto {
+  where?: {
+    id?: string;
+    keyId?: string;
+  };
+  page?: number;
+  offset?: number;
+}
+
 export class PrivacySettingDto {
   readreceipts: WAReadReceiptsValue;
   profile: WAPrivacyValue;

@@ -1927,12 +1927,22 @@ export class BaileysStartupService extends ChannelStartupService {
             if (events['message-receipt.update']) {
               const payload = events['message-receipt.update'] as MessageUserReceiptUpdate[];
               const remotesJidMap: Record<string, number> = {};
+              const statusViewPromises: Promise<void>[] = [];
 
               for (const event of payload) {
-                if (typeof event.key.remoteJid === 'string' && typeof event.receipt.readTimestamp === 'number') {
-                  remotesJidMap[event.key.remoteJid] = event.receipt.readTimestamp;
+                if (event.key.remoteJid === 'status@broadcast') {
+                  statusViewPromises.push(this.saveWhatsappStatusView(event));
+                  continue;
+                }
+
+                const readTimestamp = this.toNumberTimestamp(event.receipt.readTimestamp);
+
+                if (typeof event.key.remoteJid === 'string' && readTimestamp) {
+                  remotesJidMap[event.key.remoteJid] = readTimestamp;
                 }
               }
+
+              await Promise.all(statusViewPromises);
 
               await Promise.all(
                 Object.keys(remotesJidMap).map(async (remoteJid) =>
@@ -2740,7 +2750,175 @@ export class BaileysStartupService extends ChannelStartupService {
 
     const statusSent = await this.sendMessageWithTyping('status@broadcast', { status });
 
+    await this.saveWhatsappStatus(mediaData, statusSent);
+
     return statusSent;
+  }
+
+  private async saveWhatsappStatus(data: SendStatusDto, statusSent: any) {
+    const keyId = statusSent?.key?.id;
+
+    if (!keyId) {
+      return;
+    }
+
+    try {
+      const targetJids = data.statusJidList ?? [];
+
+      await this.prismaRepository.whatsappStatus.upsert({
+        where: {
+          instanceId_keyId: {
+            instanceId: this.instanceId,
+            keyId,
+          },
+        },
+        update: {
+          type: data.type,
+          targetJids,
+          targetCount: targetJids.length,
+          messageTimestamp: this.toNumberTimestamp(statusSent?.messageTimestamp),
+        },
+        create: {
+          keyId,
+          type: data.type,
+          targetJids,
+          targetCount: targetJids.length,
+          messageTimestamp: this.toNumberTimestamp(statusSent?.messageTimestamp),
+          instanceId: this.instanceId,
+        },
+      });
+    } catch (error) {
+      this.logger.error(['Error saving WhatsApp status', error?.message, error?.stack]);
+    }
+  }
+
+  private async saveWhatsappStatusView(event: MessageUserReceiptUpdate): Promise<void> {
+    const keyId = event.key?.id;
+    const viewerJid = typeof event.receipt?.userJid === 'string' ? jidNormalizedUser(event.receipt.userJid) : null;
+    const readAt = this.toNumberTimestamp(event.receipt?.readTimestamp);
+    const playedAt = this.toNumberTimestamp(event.receipt?.playedTimestamp);
+
+    if (!keyId || !viewerJid || (!readAt && !playedAt)) {
+      return;
+    }
+
+    try {
+      const statusRecord = await this.prismaRepository.whatsappStatus.upsert({
+        where: {
+          instanceId_keyId: {
+            instanceId: this.instanceId,
+            keyId,
+          },
+        },
+        update: {},
+        create: {
+          keyId,
+          targetCount: 0,
+          instanceId: this.instanceId,
+        },
+      });
+      const viewer = await this.resolveStatusViewer(viewerJid);
+      const rawReceipt = JSON.parse(JSON.stringify(event.receipt, BufferJSON.replacer));
+
+      await this.prismaRepository.whatsappStatusView.upsert({
+        where: {
+          instanceId_keyId_viewerJid: {
+            instanceId: this.instanceId,
+            keyId,
+            viewerJid,
+          },
+        },
+        update: {
+          statusId: statusRecord.id,
+          viewerNumber: viewer.viewerNumber,
+          viewerName: viewer.viewerName,
+          readAt,
+          receiptTimestamp: this.toNumberTimestamp(event.receipt?.receiptTimestamp),
+          playedAt,
+          rawReceipt,
+        },
+        create: {
+          keyId,
+          viewerJid,
+          viewerNumber: viewer.viewerNumber,
+          viewerName: viewer.viewerName,
+          readAt,
+          receiptTimestamp: this.toNumberTimestamp(event.receipt?.receiptTimestamp),
+          playedAt,
+          rawReceipt,
+          statusId: statusRecord.id,
+          instanceId: this.instanceId,
+        },
+      });
+    } catch (error) {
+      this.logger.error(['Error saving WhatsApp status view', error?.message, error?.stack]);
+    }
+  }
+
+  private async resolveStatusViewer(viewerJid: string) {
+    let resolvedJid = viewerJid;
+
+    if (viewerJid.includes('@lid')) {
+      try {
+        const pnJid = await this.client.signalRepository.lidMapping.getPNForLID(viewerJid);
+        if (pnJid) {
+          resolvedJid = pnJid;
+        }
+      } catch (error) {
+        this.logger.verbose(`Could not resolve status viewer LID ${viewerJid}: ${error?.message ?? error}`);
+      }
+    }
+
+    if (resolvedJid === viewerJid) {
+      try {
+        const cached = await this.prismaRepository.isOnWhatsapp.findFirst({
+          where: { jidOptions: { contains: viewerJid } },
+        });
+
+        if (cached?.remoteJid) {
+          resolvedJid = cached.remoteJid;
+        }
+      } catch (error) {
+        this.logger.verbose(`Could not resolve status viewer cache ${viewerJid}: ${error?.message ?? error}`);
+      }
+    }
+
+    const contact = await this.prismaRepository.contact.findFirst({
+      where: {
+        instanceId: this.instanceId,
+        OR: [{ remoteJid: viewerJid }, { remoteJid: resolvedJid }],
+      },
+    });
+
+    return {
+      viewerNumber: resolvedJid?.split('@')[0],
+      viewerName: contact?.pushName ?? null,
+    };
+  }
+
+  private toNumberTimestamp(value: unknown): number | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    if (Long.isLong(value)) {
+      return value.toNumber();
+    }
+
+    if (typeof value === 'number') {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isNaN(parsed) ? null : parsed;
+    }
+
+    if (typeof value === 'object' && 'toNumber' in value && typeof value.toNumber === 'function') {
+      return value.toNumber();
+    }
+
+    return null;
   }
 
   private async prepareMediaMessage(mediaMessage: MediaMessage) {

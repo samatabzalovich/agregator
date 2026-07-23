@@ -1,3 +1,4 @@
+import { StatusStatsQueryDto } from '@api/dto/chat.dto';
 import { InstanceDto } from '@api/dto/instance.dto';
 import { ProxyDto } from '@api/dto/proxy.dto';
 import { SettingsDto } from '@api/dto/settings.dto';
@@ -11,7 +12,7 @@ import { eventManager, waMonitor } from '@api/server.module';
 import { Events, wa } from '@api/types/wa.types';
 import { Auth, Chatwoot, ConfigService, HttpServer, Proxy } from '@config/env.config';
 import { Logger } from '@config/logger.config';
-import { NotFoundException } from '@exceptions';
+import { BadRequestException, NotFoundException } from '@exceptions';
 import { Contact, Message, Prisma } from '@prisma/client';
 import { createJid } from '@utils/createJid';
 import { WASocket } from 'baileys';
@@ -704,6 +705,90 @@ export class ChannelStartupService {
       skip: query.offset * (query?.page === 1 ? 0 : (query?.page as number) - 1),
       take: query.offset,
     });
+  }
+
+  public async fetchStatusStats(query: StatusStatsQueryDto) {
+    const offset = query?.offset ?? 50;
+    const page = Math.max(query?.page ?? 1, 1);
+    const statusWhere: any = {
+      instanceId: this.instanceId,
+    };
+
+    if (query?.where?.id) {
+      statusWhere.id = query.where.id;
+    }
+
+    if (query?.where?.keyId) {
+      statusWhere.keyId = query.where.keyId;
+    }
+
+    if (!query?.where?.id && !query?.where?.keyId) {
+      throw new BadRequestException('Status id or keyId is required');
+    }
+
+    const statusRecord = await this.prismaRepository.whatsappStatus.findFirst({
+      where: statusWhere,
+    });
+
+    if (!statusRecord) {
+      return {
+        status: null,
+        viewers: {
+          total: 0,
+          pages: 0,
+          currentPage: page,
+          records: [],
+        },
+      };
+    }
+
+    const viewWhere = {
+      instanceId: this.instanceId,
+      statusId: statusRecord.id,
+    };
+    const [viewsCount, viewers] = await Promise.all([
+      this.prismaRepository.whatsappStatusView.count({
+        where: viewWhere,
+      }),
+      this.prismaRepository.whatsappStatusView.findMany({
+        where: viewWhere,
+        orderBy: [{ readAt: 'desc' }, { createdAt: 'desc' }],
+        skip: offset * (page - 1),
+        take: offset,
+        select: {
+          id: true,
+          viewerJid: true,
+          viewerNumber: true,
+          viewerName: true,
+          readAt: true,
+          receiptTimestamp: true,
+          playedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    ]);
+
+    return {
+      status: {
+        id: statusRecord.id,
+        keyId: statusRecord.keyId,
+        messageId: statusRecord.messageId,
+        type: statusRecord.type,
+        targetJids: statusRecord.targetJids,
+        targetCount: statusRecord.targetCount,
+        messageTimestamp: statusRecord.messageTimestamp,
+        createdAt: statusRecord.createdAt,
+        updatedAt: statusRecord.updatedAt,
+        viewsCount,
+      },
+      viewers: {
+        total: viewsCount,
+        pages: Math.ceil(viewsCount / offset),
+        currentPage: page,
+        records: viewers,
+      },
+    };
   }
 
   public async findChatByRemoteJid(remoteJid: string) {

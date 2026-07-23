@@ -12,6 +12,7 @@ import {
   ProfileStatusDto,
   ReadMessageDto,
   SendPresenceDto,
+  StatusStatsQueryDto,
   UpdateMessageDto,
   WhatsAppNumberDto,
 } from '@api/dto/chat.dto';
@@ -34,6 +35,7 @@ import {
   profileSchema,
   profileStatusSchema,
   readMessageSchema,
+  statusStatsSchema,
   updateMessageSchema,
   whatsappNumberSchema,
 } from '@validate/validate.schema';
@@ -177,6 +179,16 @@ export class ChatRouter extends RouterBroker {
           schema: messageUpSchema,
           ClassRef: Query<MessageUpdate>,
           execute: (instance, data) => chatController.fetchStatusMessage(instance, data),
+        });
+
+        return res.status(HttpStatus.OK).json(response);
+      })
+      .post(this.routerPath('findStatusStats'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<StatusStatsQueryDto>({
+          request: req,
+          schema: statusStatsSchema,
+          ClassRef: StatusStatsQueryDto,
+          execute: (instance, data) => chatController.fetchStatusStats(instance, data),
         });
 
         return res.status(HttpStatus.OK).json(response);

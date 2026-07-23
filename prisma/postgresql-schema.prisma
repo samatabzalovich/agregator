@@ -93,6 +93,8 @@ model Instance {
   Typebot                 Typebot[]
   Session                 Session?
   MessageUpdate           MessageUpdate[]
+  WhatsappStatus          WhatsappStatus[]
+  WhatsappStatusView      WhatsappStatusView[]
   TypebotSetting          TypebotSetting?
   Media                   Media[]
   OpenaiCreds             OpenaiCreds[]
@@ -195,6 +197,49 @@ model MessageUpdate {
 
   @@index([instanceId])
   @@index([messageId])
+}
+
+model WhatsappStatus {
+  id               String               @id @default(cuid())
+  keyId            String               @db.VarChar(100)
+  messageId        String?              @db.VarChar(100)
+  type             String?              @db.VarChar(30)
+  targetJids       Json?                @db.JsonB
+  targetCount      Int                  @default(0) @db.Integer
+  messageTimestamp Int?                 @db.Integer
+  createdAt        DateTime?            @default(now()) @db.Timestamp
+  updatedAt        DateTime             @updatedAt @db.Timestamp
+  Instance         Instance             @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId       String
+  Views            WhatsappStatusView[]
+
+  @@unique([instanceId, keyId])
+  @@index([instanceId])
+  @@index([keyId])
+}
+
+model WhatsappStatusView {
+  id               String         @id @default(cuid())
+  keyId            String         @db.VarChar(100)
+  viewerJid        String         @db.VarChar(100)
+  viewerNumber     String?        @db.VarChar(100)
+  viewerName       String?        @db.VarChar(100)
+  readAt           Int?           @db.Integer
+  receiptTimestamp Int?           @db.Integer
+  playedAt         Int?           @db.Integer
+  rawReceipt       Json?          @db.JsonB
+  createdAt        DateTime?      @default(now()) @db.Timestamp
+  updatedAt        DateTime       @updatedAt @db.Timestamp
+  WhatsappStatus   WhatsappStatus @relation(fields: [statusId], references: [id], onDelete: Cascade)
+  statusId         String
+  Instance         Instance       @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId       String
+
+  @@unique([instanceId, keyId, viewerJid])
+  @@index([instanceId])
+  @@index([statusId])
+  @@index([keyId])
+  @@index([viewerJid])
 }
 
 model Webhook {
