@@ -1927,11 +1927,11 @@ export class BaileysStartupService extends ChannelStartupService {
             if (events['message-receipt.update']) {
               const payload = events['message-receipt.update'] as MessageUserReceiptUpdate[];
               const remotesJidMap: Record<string, number> = {};
-              const statusViewPromises: Promise<void>[] = [];
 
               for (const event of payload) {
-                if (event.key.remoteJid === 'status@broadcast') {
-                  statusViewPromises.push(this.saveWhatsappStatusView(event));
+                const statusViewSaved = await this.saveWhatsappStatusView(event);
+
+                if (statusViewSaved || event.key.remoteJid === 'status@broadcast') {
                   continue;
                 }
 
@@ -1941,8 +1941,6 @@ export class BaileysStartupService extends ChannelStartupService {
                   remotesJidMap[event.key.remoteJid] = readTimestamp;
                 }
               }
-
-              await Promise.all(statusViewPromises);
 
               await Promise.all(
                 Object.keys(remotesJidMap).map(async (remoteJid) =>
@@ -2792,31 +2790,36 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
-  private async saveWhatsappStatusView(event: MessageUserReceiptUpdate): Promise<void> {
+  private async saveWhatsappStatusView(event: MessageUserReceiptUpdate): Promise<boolean> {
     const keyId = event.key?.id;
-    const viewerJid = typeof event.receipt?.userJid === 'string' ? jidNormalizedUser(event.receipt.userJid) : null;
+    const viewerJidRaw =
+      typeof event.receipt?.userJid === 'string'
+        ? event.receipt.userJid
+        : event.key?.remoteJid !== 'status@broadcast'
+          ? event.key?.remoteJid
+          : event.key?.participant;
+    const viewerJid = typeof viewerJidRaw === 'string' ? jidNormalizedUser(viewerJidRaw) : null;
     const readAt = this.toNumberTimestamp(event.receipt?.readTimestamp);
     const playedAt = this.toNumberTimestamp(event.receipt?.playedTimestamp);
 
     if (!keyId || !viewerJid || (!readAt && !playedAt)) {
-      return;
+      return false;
     }
 
     try {
-      const statusRecord = await this.prismaRepository.whatsappStatus.upsert({
+      const statusRecord = await this.prismaRepository.whatsappStatus.findUnique({
         where: {
           instanceId_keyId: {
             instanceId: this.instanceId,
             keyId,
           },
         },
-        update: {},
-        create: {
-          keyId,
-          targetCount: 0,
-          instanceId: this.instanceId,
-        },
       });
+
+      if (!statusRecord) {
+        return false;
+      }
+
       const viewer = await this.resolveStatusViewer(viewerJid);
       const rawReceipt = JSON.parse(JSON.stringify(event.receipt, BufferJSON.replacer));
 
@@ -2850,8 +2853,11 @@ export class BaileysStartupService extends ChannelStartupService {
           instanceId: this.instanceId,
         },
       });
+
+      return true;
     } catch (error) {
       this.logger.error(['Error saving WhatsApp status view', error?.message, error?.stack]);
+      return false;
     }
   }
 
